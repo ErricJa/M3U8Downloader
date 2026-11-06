@@ -1,0 +1,94 @@
+# M3U8Downloader
+
+Windows 下批量下载 m3u8/HLS 并输出 MP4 的命令行工具，当前版本 **V9**。
+原工作流为 `N_m3u8DL-CLI-SimpleG.exe → N_m3u8DL-CLI_v3.0.1.exe → ffmpeg.exe`，
+本项目用 Python 标准库做非 GUI 复刻，现以 `N_m3u8DL-RE 0.6.0` 为主下载内核、
+`FFmpeg 9.0.2` 负责混流，旧 CLI 3.0.2 保留为失败回退。
+
+## 快速开始
+
+- **直接双击 `M3U8Downloader.exe`**：单文件、自包含，内嵌 RE / CLI 3.0.2 / ffmpeg / config / NO_UPDATE，
+  无需 Python、bat、原安装目录，也**不需要**解压任何组件。
+- 源码运行：`python m3u8_downloader.py`（需同目录放 `N_m3u8DL-RE.exe`、`ffmpeg.exe` 等组件）。
+- 重新打包：`python build_exe.py` → `dist/M3U8Downloader.exe`。
+
+启动后逐条输入「m3u8 地址 + 视频标题」，地址留空结束本批；保存目录直接回车取系统默认视频路径。
+
+## 仓库文件
+
+| 文件 | 大小 | 说明 |
+| --- | --- | --- |
+| `M3U8Downloader.exe` | 51.6 MiB | 最终单文件程序（自包含，可直接运行） |
+| `m3u8_downloader.py` | 100 KB | 主程序源码（2316 行） |
+| `build_exe.py` | 5 KB | PyInstaller onefile 打包脚本 |
+| `config.txt` | 361 B | 原版 Base64 配置 |
+| `NO_UPDATE` | 0 B | 关闭旧 CLI 联网自更新的隐藏开关 |
+| `ReadMe.log` | 25 KB | V1–V9 完整更新日志 |
+| `m3u8链接下载问题分析报告.md` | 18 KB | 12 条真实链接的三层诊断报告 |
+| `N_m3u8DL-RE.exe` | 12.7 MiB | 主下载内核 v0.6.0-beta（MIT，NativeAOT，无需 .NET） |
+| `N_m3u8DL-CLI_v3.0.2.exe` | 1.35 MiB | 失败回退内核 |
+| `N_m3u8DL-CLI_v3.0.1.exe` | 1.34 MiB | 原版内核，保留兼容 |
+| `ffmpeg_tools.7z` | 53.0 MiB | FFmpeg 9.0.2 的 `ffmpeg.exe` + `ffprobe.exe` 无损压缩包 |
+| `restore_tools.py` | 2 KB | 一键解压并校验上述压缩包 |
+| `SHA256SUMS.txt` | 2 KB | 仓库内全部文件的 SHA-256 校验清单 |
+
+## 关于 ffmpeg_tools.7z
+
+`ffmpeg.exe`（100.54 MiB）与 `ffprobe.exe`（100.35 MiB）单文件超过 GitHub 100 MB 硬限制，
+且本环境无法使用 Git LFS，因此以 **7z solid 无损压缩**方式入库（210 MB → 53 MiB）。
+压缩包内两个 exe 与原件 MD5 完全一致，解压后即可获得原版二进制。
+
+**只在用源码运行或需要独立组件时才需要解压**；单文件 exe 已内嵌 ffmpeg，直接双击不受影响。
+
+```bash
+# 方式一：安装 7-Zip 后
+7z x ffmpeg_tools.7z -o.
+
+# 方式二：无需记忆命令，自动查找 7-Zip 并校验
+python restore_tools.py
+```
+
+`ffprobe` 是可选的精确探测组件：缺失时程序自动回退 `ffmpeg -i` 完成成品可播放性校验，功能不受影响。
+
+校验仓库文件完整性（PowerShell）：
+
+```powershell
+Get-Content SHA256SUMS.txt | ForEach-Object {
+  $h,$_,$name = $_ -split '\s+',3
+  if ((Get-FileHash -Algorithm SHA256 $name).Hash.ToLower() -ne $h) { "MISMATCH: $name" }
+}
+```
+
+## 本仓库的提交方式
+
+因上传环境仅放行 `api.github.com`（`github.com` 的 git / LFS 端点不可达），
+本次通过 GitHub REST Git Data API 直接构建 tree 与 commit 上传，**未使用 Git LFS**。
+因此克隆本仓库不需要安装 git-lfs，也没有 LFS 指针文件：
+
+```bash
+git clone https://github.com/ErricJa/M3U8Downloader.git
+```
+
+## 运行期目录
+
+```
+<保存目录>\<标题>.mp4                 成品视频
+<保存目录>\<标题>.<lang>.srt/.vtt     独立字幕
+<保存目录>\ffmpeg temp\*.log          全部日志（长期保留）
+<保存目录>\ffmpeg temp\*              下载缓存（成功仅保留 .log）
+<保存目录>\ffmpeg temp\失败缓存_*\    失败任务全量缓存（长期保留）
+```
+
+## 主要能力
+
+批量输入与去重、master 自动选最高配置、多音轨与多字幕、fMP4/CMAF、DASH/MSS、
+HEVC/H.264/AV1/VP9、错误地址 3 次重连、403 指数退避、线程自适应、
+僵尸直播提前判失败、RE 失败自动回退 CLI 并在统计中给出理由、
+字幕内嵌与独立输出、失败缓存归档、打开资源管理器、批次自动重启。
+
+完整版本演进、每版解决的问题与最终核验数据见 `ReadMe.log`。
+
+## 第三方组件
+
+`N_m3u8DL-RE`（MIT）、`N_m3u8DL-CLI`、`FFmpeg` 均为各自作者的作品，遵循各自许可证；
+本仓库仅做集成与分发，未修改其二进制文件。
