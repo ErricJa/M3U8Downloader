@@ -1,0 +1,7 @@
+*.exe -text
+*.7z -text
+*.py -text
+*.log -text
+*.md -text
+*.txt -text
+NO_UPDATE -text

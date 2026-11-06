@@ -7,18 +7,54 @@ Windows 下批量下载 m3u8/HLS 并输出 MP4 的命令行工具，当前版本
 
 ## 快速开始
 
-- **直接双击 `M3U8Downloader.exe`**：单文件、自包含，内嵌 RE / CLI 3.0.2 / ffmpeg / config / NO_UPDATE，
-  无需 Python、bat、原安装目录，也**不需要**解压任何组件。
-- 源码运行：`python m3u8_downloader.py`（需同目录放 `N_m3u8DL-RE.exe`、`ffmpeg.exe` 等组件）。
+```bash
+git clone https://github.com/ErricJa/M3U8Downloader.git
+cd M3U8Downloader
+python restore_parts.py          # 一次性还原主程序 exe（约 1 秒，自动校验 SHA-256）
+```
+
+还原后直接双击 **`M3U8Downloader.exe`**：单文件、自包含，内嵌 RE / CLI 3.0.2 /
+ffmpeg / config / NO_UPDATE，无需 Python、bat、原安装目录，也**不需要**解压 FFmpeg 组件。
+
+其他用法：
+
+- 源码运行：`python m3u8_downloader.py`（需同目录放 `N_m3u8DL-RE.exe`、`ffmpeg.exe` 等组件，
+  可再运行 `python restore_tools.py` 解压组件）。
 - 重新打包：`python build_exe.py` → `dist/M3U8Downloader.exe`。
 
 启动后逐条输入「m3u8 地址 + 视频标题」，地址留空结束本批；保存目录直接回车取系统默认视频路径。
+
+## 为什么主程序以分片形式入库
+
+上传环境仅放行 `api.github.com`：`github.com` 的 git / LFS 端点与 `uploads.github.com`
+均不可达，无法 `git push` 或使用 Git LFS；而 GitHub REST API 单次请求最多只能承载约
+40 MB 内容，54 MB 的主程序 exe 与 53 MB 的组件包会被拒绝。因此这两个文件被切成
+**30 MiB 分片**入库，`restore_parts.py` 按序合并并校验 SHA-256，还原结果与原件逐字节一致。
+
+```
+parts/M3U8Downloader.exe.part01 / .part02   -> M3U8Downloader.exe  (51.6 MiB)
+parts/ffmpeg_tools.7z.part01   / .part02   -> ffmpeg_tools.7z      (53.0 MiB)
+```
+
+`ffmpeg_tools.7z` 是 `ffmpeg.exe`（100.54 MiB）+ `ffprobe.exe`（100.35 MiB）的
+7z solid 无损压缩包（210 MB → 53 MiB），两个 exe 单文件均超过 GitHub 100 MB 硬限制。
+**只有用源码运行时才需要解压它**；单文件 exe 已内嵌 ffmpeg，直接双击不受影响。
+
+```bash
+python restore_tools.py          # 需要本机安装 7-Zip；自动查找 7z.exe 并校验
+# 或：7z x ffmpeg_tools.7z -o.
+```
+
+`ffprobe` 是可选的精确探测组件：缺失时程序自动回退 `ffmpeg -i` 完成成品可播放性校验，
+功能不受影响。
 
 ## 仓库文件
 
 | 文件 | 大小 | 说明 |
 | --- | --- | --- |
-| `M3U8Downloader.exe` | 51.6 MiB | 最终单文件程序（自包含，可直接运行） |
+| `parts/*.part01..02` | 共 104.6 MiB | 主程序 exe 与 FFmpeg 组件包的分片 |
+| `restore_parts.py` | 3 KB | 合并分片、还原主程序与组件包（零依赖） |
+| `restore_tools.py` | 3 KB | 解压 `ffmpeg_tools.7z` 并校验两个 exe |
 | `m3u8_downloader.py` | 100 KB | 主程序源码（2316 行） |
 | `build_exe.py` | 5 KB | PyInstaller onefile 打包脚本 |
 | `config.txt` | 361 B | 原版 Base64 配置 |
@@ -28,27 +64,10 @@ Windows 下批量下载 m3u8/HLS 并输出 MP4 的命令行工具，当前版本
 | `N_m3u8DL-RE.exe` | 12.7 MiB | 主下载内核 v0.6.0-beta（MIT，NativeAOT，无需 .NET） |
 | `N_m3u8DL-CLI_v3.0.2.exe` | 1.35 MiB | 失败回退内核 |
 | `N_m3u8DL-CLI_v3.0.1.exe` | 1.34 MiB | 原版内核，保留兼容 |
-| `ffmpeg_tools.7z` | 53.0 MiB | FFmpeg 9.0.2 的 `ffmpeg.exe` + `ffprobe.exe` 无损压缩包 |
-| `restore_tools.py` | 2 KB | 一键解压并校验上述压缩包 |
 | `SHA256SUMS.txt` | 2 KB | 仓库内全部文件的 SHA-256 校验清单 |
 
-## 关于 ffmpeg_tools.7z
-
-`ffmpeg.exe`（100.54 MiB）与 `ffprobe.exe`（100.35 MiB）单文件超过 GitHub 100 MB 硬限制，
-且本环境无法使用 Git LFS，因此以 **7z solid 无损压缩**方式入库（210 MB → 53 MiB）。
-压缩包内两个 exe 与原件 MD5 完全一致，解压后即可获得原版二进制。
-
-**只在用源码运行或需要独立组件时才需要解压**；单文件 exe 已内嵌 ffmpeg，直接双击不受影响。
-
-```bash
-# 方式一：安装 7-Zip 后
-7z x ffmpeg_tools.7z -o.
-
-# 方式二：无需记忆命令，自动查找 7-Zip 并校验
-python restore_tools.py
-```
-
-`ffprobe` 是可选的精确探测组件：缺失时程序自动回退 `ffmpeg -i` 完成成品可播放性校验，功能不受影响。
+> `M3U8Downloader.exe`、`ffmpeg_tools.7z`、`ffmpeg.exe`、`ffprobe.exe` 为还原产物，
+> 不直接入库（已列入 `.gitignore`），避免重复提交。
 
 校验仓库文件完整性（PowerShell）：
 
@@ -61,13 +80,8 @@ Get-Content SHA256SUMS.txt | ForEach-Object {
 
 ## 本仓库的提交方式
 
-因上传环境仅放行 `api.github.com`（`github.com` 的 git / LFS 端点不可达），
-本次通过 GitHub REST Git Data API 直接构建 tree 与 commit 上传，**未使用 Git LFS**。
-因此克隆本仓库不需要安装 git-lfs，也没有 LFS 指针文件：
-
-```bash
-git clone https://github.com/ErricJa/M3U8Downloader.git
-```
+本次通过 GitHub REST Git Data API 直接创建 blob、构建 tree 与 commit 上传，
+**未使用 Git LFS 与 git push**。因此克隆不需要 git-lfs，也没有 LFS 指针文件。
 
 ## 运行期目录
 
