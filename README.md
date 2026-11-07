@@ -6,7 +6,7 @@
 文件ReadMe.log为项目迭代历史，如有需要可自行阅读。技术人员或技术爱好者可自取项目文件进行自定义优化。
 主程序国内镜像：链接：https://share.weiyun.com/5JsS5qEj 密码：i6qb2d，通过该链接可直接下载立即可用的m3u8_downloader.exe主程序。
 
-如有侵权尽可通过邮箱联系我进行处理。
+如有侵权尽可通过邮箱1276744099@qq.com联系我进行处理。
 
 
 # M3U8Downloader
