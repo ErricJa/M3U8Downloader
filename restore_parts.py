@@ -20,7 +20,7 @@ PARTS_DIR = os.path.join(HERE, "parts")
 
 # 目标文件 -> (分片数, 还原后 SHA-256)
 TARGETS = {
-    "M3U8Downloader.exe": (2, "3e1a1ab3701ae579dadc9a93183b1628ad0ed371569aa4663cc81f4291dc4726"),
+    "M3U8Downloader.exe": (2, "6f5a676c087f66bfb793663195e0e40cb6087b55ba87ec59f61235bcc1b080d3"),
     "ffmpeg_tools.7z": (2, "75f538b7c98b6361f0462a0bce94ad40fc1d83c6e608a2c1f8fe1f626d00a82c"),
 }
 

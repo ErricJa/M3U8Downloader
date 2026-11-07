@@ -1,11 +1,31 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 r"""
-M3U8 批量下载器 - Python 命令行复刻版
+M3U8 批量下载器 - Python 命令行复刻版    版本：V10
 
 原项目：N_m3u8DL-CLI-SimpleG.exe -> N_m3u8DL-CLI_v3.0.1.exe -> ffmpeg.exe
 复刻后：调度壳 + N_m3u8DL-RE 0.6.0（主内核） + ffmpeg 9.0.2，
         旧 N_m3u8DL-CLI 3.0.2 保留为失败回退内核。
+
+V10 输入说明（在「视频地址」处可填写以下三种）：
+  1) 网络 m3u8 地址：http(s)://...
+  2) 本地 .m3u8 文件：C:/xxx/a.m3u8（可带引号）
+  3) 本地 .txt 清单文件：C:/xxx/list.txt（可带引号）
+
+TXT 清单格式（每行只写内容，不添加任何标识）：
+    奇数行 = 视频地址，偶数行 = 文件名，成对出现；
+    末尾空一行隔断，下一行填写保存目录（可空缺：留空或不写该行 -> 按原流程询问）。
+    示例：
+        https://example.com/a.m3u8
+        第一集
+        "D:/list/b.m3u8"
+        第二集
+        (此处为空行)
+        "E:/我的视频"
+    说明：本地文件与保存目录均允许带引号；清单中的相对路径按清单文件所在目录解析。
+          清单给出保存目录时直接读取使用，未给出时按原流程询问。
+          保存目录判定：已存在的文件夹直接使用；磁盘存在但文件夹不存在则按路径创建；
+          磁盘不存在则报错，要求重新输入路径，或直接回车确认系统默认视频路径。
 
 增强（不改原有目录/清理策略）：
   * N_m3u8DL-RE 主下载层：--auto-select 自动选最高配置，-M 混流独立音轨 /
@@ -67,6 +87,7 @@ DEFAULT_CONFIG = {
 }
 
 INSTALL_DIR = r"C:\HRSoftstore\Install\M3U8Downloader"
+APP_VERSION = "V10"                    # 程序版本号（显示在启动横幅）
 TEMP_DIR_NAME = "ffmpeg temp"          # 保存目录下：全部日志与下载缓存
 HEVC_ENCODERS = ("libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf", "hevc_mf")
 H264_ENCODERS = ("libx264", "h264_nvenc", "h264_qsv", "h264_amf", "h264_mf")
@@ -478,6 +499,123 @@ def find_tools():
         "未找到 N_m3u8DL-RE.exe / N_m3u8DL-CLI_v3.0.2.exe / ffmpeg.exe。\n"
         "请把本程序放在原 M3U8Downloader 目录，或设置环境变量 M3U8DL_HOME 指向该目录。"
     )
+
+
+# ---------------------------------------------------------------- V10 输入层
+_QUOTE_PAIRS = {
+    '"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019",
+    "「": "」", "『": "』",
+}
+_QUOTE_CHARS = '"' + "'" + "\u201c\u201d\u2018\u2019「」『』"
+
+
+def strip_quotes(s):
+    """剥离成对引号，并兜底去掉首尾零散引号（本地路径/保存目录均可带引号）"""
+    s = str(s).strip()
+    while len(s) >= 2:
+        for left, right in _QUOTE_PAIRS.items():
+            if s[0] == left and s[-1] == right:
+                s = s[1:-1].strip()
+                break
+        else:
+            break
+    return s.strip(_QUOTE_CHARS)
+
+
+def read_text_any(path):
+    """兼容 UTF-8(BOM) / UTF-16(BOM) / GBK 记事本清单"""
+    with open(path, "rb") as f:
+        raw = f.read()
+    if raw.startswith(bytes([0xFF, 0xFE])) or raw.startswith(bytes([0xFE, 0xFF])):
+        return raw.decode("utf-16")
+    for enc in ("utf-8-sig", "gbk", "utf-8"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", "replace")
+
+
+def clean_title(name):
+    """清单偶数行是文件名：兼容带视频扩展名的写法"""
+    n = strip_quotes(name)
+    stem, ext = os.path.splitext(n)
+    if ext.lower() in (".mp4", ".mkv", ".ts", ".mov", ".flv", ".avi",
+                       ".webm", ".mpg", ".mpeg", ".m3u8"):
+        n = stem
+    return safe_name(n, "")
+
+
+def _resolve_from_list(value, list_path):
+    """清单中的相对路径按清单文件所在目录解析；网络地址原样返回"""
+    v = strip_quotes(value)
+    if re.match(r"^(https?|ftp|file)://", v, re.I):
+        return v
+    bs2 = chr(92) * 2
+    if v and not os.path.isabs(v) and not re.match(r"^[A-Za-z]:", v) and not v.startswith(bs2):
+        return os.path.join(os.path.dirname(list_path), v)
+    return v
+
+
+def parse_task_file(path):
+    """解析 TXT 清单 -> ([(源, 标题), ...], 保存目录或 None)"""
+    lines = read_text_any(path).splitlines()
+    sep = next((i for i, line in enumerate(lines) if not line.strip()), None)
+    record = lines if sep is None else lines[:sep]
+    tail = [] if sep is None else lines[sep + 1:]
+
+    save_dir = None
+    for line in tail:
+        value = strip_quotes(line)
+        if value:
+            save_dir = _resolve_from_list(value, path)
+            break
+
+    tasks = []
+    i = 0
+    while i < len(record):
+        addr_line = record[i]
+        title_line = record[i + 1] if i + 1 < len(record) else ""
+        line_no = i + 1
+        i += 2
+        addr = strip_quotes(addr_line)
+        if not addr:
+            continue
+        addr = _resolve_from_list(addr, path)
+        try:
+            src = normalize_source(addr)
+        except ValueError as e:
+            raise ValueError(f"清单第 {line_no} 行：{e}")
+        title = clean_title(title_line) if title_line.strip() else title_from_source(src, len(tasks) + 1)
+        tasks.append((src, title))
+    if not tasks:
+        raise ValueError(f"清单中没有有效任务：{path}")
+    return tasks, save_dir
+
+
+def classify_save_dir(raw, cfg=None):
+    """保存目录分级判定：空->默认；已存在文件夹->直接用；盘在路径不在->创建；盘不存在->报错"""
+    s = strip_quotes(raw)
+    if not s:
+        path = default_videos_dir(cfg)
+        os.makedirs(path, exist_ok=True)
+        return path
+    if re.match(r"^[A-Za-z]:$", s):
+        s += os.sep
+    path = os.path.abspath(os.path.expanduser(os.path.expandvars(s)))
+    drive, _ = os.path.splitdrive(path)
+    if drive:
+        root = drive if drive.startswith(chr(92) * 2) else drive + os.sep
+        if not os.path.isdir(root):
+            label = "网络位置" if drive.startswith(chr(92) * 2) else f"磁盘 {drive}"
+            raise ValueError(f"{label} 不存在或不可访问：{root}")
+    if os.path.isdir(path):
+        return path
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception as e:
+        raise ValueError(f"无法创建目录 {path}：{e}")
+    return path
 
 
 def normalize_source(raw):
@@ -2186,54 +2324,95 @@ def run_task(tool_dir, cli_exe, ffmpeg, cfg, idx, count, src, title, save_dir,
 
 # ---------------------------------------------------------------- 交互
 def collect_tasks():
+    """返回 (任务列表, 清单预设保存目录)；地址处可填 URL / 本地 m3u8 / 本地 TXT 清单"""
     tasks = []
     seen = set()                 # 同一批次内按地址去重，避免重复下载生成 (2) 文件
+    preset_dir = None
     idx = 1
-    say("\n  依次输入 [m3u8 地址] 与 [视频标题]，可重复添加；地址处直接回车结束添加。")
-    say("  地址支持 http(s) 网络链接，也支持本地 .m3u8 文件路径。")
+    say("\n  视频地址可填：网络 m3u8 地址 / 本地 .m3u8 文件 / 本地 .txt 清单（本地路径可带引号）。")
+    say("  TXT 清单格式：奇数行=视频地址，偶数行=文件名；末尾空一行隔断；下一行=保存目录（可空缺）。")
+    say('  示例： https://x/a.m3u8 -> 第一集 -> "D:/b.m3u8" -> 第二集 -> (空行) -> "E:/我的视频"')
+    say("  清单未写保存目录时按原流程询问；已写则直接读取使用。地址处直接回车结束添加。")
     say("-" * 68)
     while True:
         try:
-            raw = input(f"[任务 #{idx}] m3u8 地址（回车结束）: ").strip()
+            raw = input(f"[任务 #{idx}] 视频地址（回车结束）: ").strip()
         except (EOFError, KeyboardInterrupt):
             raise
         if not raw:
             break
+        candidate = strip_quotes(raw)
+        local = ""
+        if not re.match(r"^(https?|ftp)://", candidate, re.I):
+            local = os.path.abspath(os.path.expanduser(os.path.expandvars(candidate)))
+        if local and os.path.isfile(local) and os.path.splitext(local)[1].lower() == ".txt":
+            try:
+                batch, batch_dir = parse_task_file(local)
+            except ValueError as e:
+                say(f"      [!!] {e}，请重新输入")
+                continue
+            added = 0
+            for src, title in batch:
+                if src in seen:
+                    say(f"      [提示] 该地址已在本批中，自动去重跳过: {title}")
+                    continue
+                seen.add(src)
+                tasks.append((src, title))
+                say(f"      已添加: {title}")
+                added += 1
+            if batch_dir:
+                if preset_dir and os.path.normpath(batch_dir) != os.path.normpath(preset_dir):
+                    say("      [提示] 多个清单指定了不同保存目录，以最后一个为准")
+                preset_dir = batch_dir
+                say(f"      清单保存目录: {batch_dir}")
+            say(f"      清单导入完成：{added} 条任务（{os.path.basename(local)}）")
+            idx += added
+            continue
         try:
-            src = normalize_source(raw)
+            src = normalize_source(candidate)
         except ValueError as e:
             say(f"      [!!] {e}，请重新输入")
+            continue
+        if src in seen:
+            say("      [提示] 该地址已在本批中，自动去重跳过")
             continue
         try:
             raw_title = input(f"          视频标题（回车用默认）: ").strip()
         except (EOFError, KeyboardInterrupt):
             raise
-        if src in seen:
-            say("      [提示] 该地址已在本批中，自动去重跳过")
-            continue
         seen.add(src)
         title = safe_name(raw_title, "") if raw_title else title_from_source(src, idx)
         tasks.append((src, title))
         say(f"      已添加: {title}")
         idx += 1
-    return tasks
+    return tasks, preset_dir
 
 
-def ask_save_dir(cfg):
+def ask_save_dir(cfg, preset=None):
+    """清单给出有效保存目录则直接使用；否则按原流程询问，并按磁盘/文件夹状态分级判定"""
     default_dir = default_videos_dir(cfg)
+    if preset:
+        try:
+            path = classify_save_dir(preset, cfg)
+            say("")
+            say(f"保存目录（来自清单文件，直接读取使用）: {path}")
+            return path
+        except ValueError as e:
+            say(f"[!!] 清单中的保存目录不可用：{e}")
+            say("     请重新输入路径，或直接回车确认系统默认视频路径。")
     say("")
-    try:
-        raw = input(f"下载保存目录（回车 = 系统默认视频路径 {default_dir}）: ").strip().strip('"')
-    except (EOFError, KeyboardInterrupt):
-        raise
-    path = os.path.abspath(os.path.expanduser(os.path.expandvars(raw))) if raw else default_dir
-    try:
-        os.makedirs(path, exist_ok=True)
-    except Exception as e:
-        say(f"[!!] 无法创建目录 {path}：{e}，改用默认路径")
-        path = default_dir
-        os.makedirs(path, exist_ok=True)
-    return path
+    say("  保存目录规则：已存在的文件夹直接使用；磁盘存在但文件夹不存在则按路径创建；")
+    say("                磁盘不存在则报错，请重新输入或直接回车使用系统默认视频路径。")
+    while True:
+        try:
+            raw = input(f"下载保存目录（回车 = 系统默认视频路径 {default_dir}）: ")
+        except (EOFError, KeyboardInterrupt):
+            raise
+        try:
+            return classify_save_dir(raw, cfg)
+        except ValueError as e:
+            say(f"[!!] {e}")
+            say("     请重新输入路径，或直接回车确认系统默认视频路径。")
 
 
 def open_folder(path):
@@ -2293,8 +2472,10 @@ def main():
         round_no += 1
         say("")
         say("=" * 68)
-        say(f"  M3U8 批量下载器 (Python 复刻版)   第 {round_no} 轮")
+        say(f"  M3U8 批量下载器 (Python 复刻版)  {APP_VERSION}   第 {round_no} 轮")
         say("=" * 68)
+        say("  视频地址: 网络 m3u8 / 本地 .m3u8 / 本地 .txt 清单（奇数行地址、偶数行文件名）")
+        say("  TXT 清单: 末尾空一行隔断，下一行写保存目录（可空缺）；本地路径与保存目录均可带引号")
         if re_exe:
             say(f"  主下载内核: {os.path.basename(re_exe)} {re_version(re_exe)}"
                 f"   |   回退内核: {os.path.basename(cli_exe)}")
@@ -2306,7 +2487,7 @@ def main():
         say("  内核与 ffmpeg 已内置于本 exe；其他参数按 config.txt 默认值运行（已隐藏）")
 
         try:
-            tasks = collect_tasks()
+            tasks, preset_dir = collect_tasks()
         except (EOFError, KeyboardInterrupt):
             say("\n已退出。")
             return
@@ -2316,7 +2497,7 @@ def main():
             continue
 
         try:
-            save_dir = ask_save_dir(cfg)
+            save_dir = ask_save_dir(cfg, preset_dir)
         except (EOFError, KeyboardInterrupt):
             say("\n已退出。")
             return
